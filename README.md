@@ -40,13 +40,13 @@ nano .env
 * proxy: http://user:pass@ip:port
 
 ```bash
-nano proxy.txt
+nano proxies.txt
 ```
 
-- query id: how to get query id => join my channel: https://t.me/airdrophuntersieutoc
+- privatekey: how to get => join my channel: https://t.me/airdrophuntersieutoc
 
 ```bash
-nano data.txt
+nano privateKeys.txt
 ```
 
 - Run the script
