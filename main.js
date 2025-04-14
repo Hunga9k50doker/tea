@@ -10,6 +10,7 @@ const fs = require("fs").promises;
 const axios = require("axios");
 const { sleep, loadData, getRandomNumber, saveToken, isTokenExpired, saveJson, getRandomElement } = require("./utils.js");
 const { Worker, isMainThread, parentPort, workerData } = require("worker_threads");
+const { solveCaptcha } = require("./captcha.js");
 
 const wallets = loadData("wallets.txt");
 const rl = readline.createInterface({
@@ -363,6 +364,90 @@ class ClientAPI {
     await this.executeDailyTask(wallet);
   }
 
+  async handleFaucet() {
+    try {
+      this.log(`Starting faucet...`, "info");
+      const address = this.itemData.address;
+      this.log(`Captcha solving[1/2]...`, "info");
+      const captchaToken = await solveCaptcha();
+      if (!captchaToken) {
+        this.log(`failed to solve captcha`, "error");
+        return;
+      }
+
+      if (!this.proxy) {
+        this.log(`Proxy not found`, "error");
+        return;
+      }
+      const agent = new HttpsProxyAgent(this.proxy);
+      // Request 1: startSession
+      const urlStart = `https://faucet-sepolia.tea.xyz/api/startSession?cliver=${settings.CLIVER}`;
+      const payloadStart = {
+        addr: address,
+        captchaToken: captchaToken,
+      };
+      const headers = {
+        "Content-Type": "application/json",
+      };
+
+      const responseStart = await axios.post(urlStart, payloadStart, {
+        headers: headers,
+        httpAgent: agent,
+        httpsAgent: agent,
+        timeout: 120000,
+      });
+
+      if (responseStart.status !== 200) {
+        this.log(`Error starting session: ${responseStart.status} - ${JSON.stringify(responseStart?.data || {})}`, "error");
+        return;
+      }
+
+      // Lấy session từ response
+      const startData = responseStart.data;
+      const session = startData.session;
+      if (!session) {
+        this.log(`Cannot get session`, "error");
+        return;
+      }
+
+      // Giải hCaptcha_claim
+      this.log(`Captcha solving[2/2]...`, "info");
+      const captchaTokenClaim = await solveCaptcha();
+      if (!captchaTokenClaim) {
+        this.log(`failed to solve captcha`, "error");
+        return;
+      }
+
+      // Request 2: claimReward
+      const urlClaim = "https://faucet-sepolia.tea.xyz/api/claimReward";
+      const payloadClaim = {
+        session: session,
+        captchaToken: captchaTokenClaim,
+      };
+
+      const responseClaim = await axios.post(urlClaim, payloadClaim, {
+        headers: headers,
+        httpAgent: agent,
+        httpsAgent: agent,
+        timeout: 120000,
+      });
+
+      if (responseClaim.status !== 200) {
+        this.log(`Error claiming reward: ${responseClaim.status} - ${JSON.stringify(responseClaim?.data || {})}`, "error");
+        return;
+      }
+
+      // Lấy dữ liệu từ response claim
+      const claimData = responseClaim.data;
+      const claimIdx = claimData.claimIdx;
+      const claimStatus = claimData.claimStatus;
+      const successMsg = `Claim Idex: ${claimIdx} | Status: ${claimStatus} (Pending)`;
+      this.log(successMsg, "success");
+    } catch (error) {
+      this.log(`Error in handleFaucet: ${error.message}`, "error");
+    }
+  }
+
   async runAccount() {
     const accountIndex = this.accountIndex;
     this.session_name = this.itemData.address;
@@ -402,6 +487,9 @@ class ClientAPI {
         break;
       case "5":
         await this.handleDailyTask(wallet);
+        break;
+      case "6":
+        await this.handleFaucet();
         break;
       default:
         process.exit(0);
@@ -450,10 +538,11 @@ async function main() {
   console.log(colors.white("3. Claim rewards"));
   console.log(colors.white("4. Withdraw stTEA (Unstake: 80%)"));
   console.log(colors.white("5. Daily task (100 transfers)"));
+  console.log(colors.white("6. Faucet TEA | Wallets from privateKeys.txt"));
   console.log(colors.white("===================="));
 
-  acction = await askQuest("Choose an option (1-5): ");
-  if (acction < 1 || acction > 5) {
+  acction = await askQuest("Choose an option (1-6): ");
+  if (acction < 1 || acction > 6) {
     console.log(colors.red("Invalid option. Please try again. ⚠️"));
     process.exit(0);
   }
