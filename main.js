@@ -141,32 +141,37 @@ class ClientAPI {
     this.log(colors.white(`TEA Balance: ${colors.cyan(ethers.utils.formatEther(teaBalance))} ${network.symbol} | stTEA Balance: ${colors.cyan(ethers.utils.formatEther(stTeaBalance))} stTEA `));
   }
 
-  async stakeTea(wallet, amount, retries = 1) {
-    if (!amount || isNaN(amount) || amount <= 0) {
-      return console.log(colors.red(`Amount: ${amount} | Invalid amount. Please enter a positive number. ⚠️`));
+  async stakeTea(wallet, percentage = 5, retries = 1) {
+    percentage = getRandomNumber(settings.AMOUNT_STAKE[0], settings.AMOUNT_STAKE[1]); // Get a random percentage between 1 and 100
+    percentage = Math.floor(percentage);
+
+    if (percentage <= 0 || percentage > 100) {
+      return console.log(colors.red(`Percentage: ${percentage}% | Invalid percentage. Please enter a value between 1 and 100. ⚠️`));
     }
 
     try {
-      const amountWei = ethers.utils.parseEther(amount.toString());
+      const balance = await wallet.provider.getBalance(wallet.address);
+      const amount = balance.mul(percentage).div(100); // Calculate the amount based on the percentage
+      const amountWei = ethers.utils.parseEther(ethers.utils.formatEther(amount)); // Convert to Wei
       const gasPrice = await wallet.provider.getGasPrice();
       const estimatedGas = settings.ESTIMATED_GAS || 100000;
       const gasCost = gasPrice.mul(estimatedGas); // gasCost in Wei
-      const balance = await wallet.provider.getBalance(wallet.address);
+
       const stTeaContract = new ethers.Contract(stTeaContractAddress, stTeaABI, wallet);
 
       this.log(`Gas cost (in Wei): ${gasCost.toString()}, Balance (in Wei): ${balance.toString()}, Estimated Gas: ${settings.ESTIMATED_GAS}`);
 
       // Compare gasCost and balance in Wei
-      if (gasCost.gt(balance)) {
+      if (gasCost.add(amountWei).gt(balance)) {
         this.log(
           colors.red(
-            `Gas cost: ${ethers.utils.formatEther(gasCost)} | Balance: ${ethers.utils.formatEther(balance)} | Estimated Gas: ${settings.ESTIMATED_GAS} | Insufficient balance for gas fees. 🚫`
+            `Gas cost: ${ethers.utils.formatEther(gasCost)} | Amount: ${ethers.utils.formatEther(amount)} | Balance: ${ethers.utils.formatEther(balance)} | Insufficient balance for gas fees. 🚫`
           )
         );
         return null;
       }
 
-      this.log(colors.yellow(`Staking ${amount} TEA...`));
+      this.log(colors.yellow(`Staking ${ethers.utils.formatEther(amount)} (${percentage}%) TEA...`));
 
       const tx = await stTeaContract.stake({
         value: amountWei,
@@ -178,14 +183,14 @@ class ClientAPI {
       this.log("Waiting for confirmation...", "info");
       const receipt = await tx.wait();
 
-      this.log(colors.green(`Transaction confirmed in block ${receipt.blockNumber} ✅ | Successfully staked ${amount} TEA! 🎉`));
+      this.log(colors.green(`Transaction confirmed in block ${receipt.blockNumber} ✅ | Successfully staked ${ethers.utils.formatEther(amount)} TEA! 🎉`));
 
       return receipt;
     } catch (error) {
       this.log(colors.red("Error staking TEA:", error.message, "❌"));
       if (retries > 0) {
         this.log(colors.yellow(`Retrying stake... (${retries} retries left)`));
-        return stakeTea(wallet, amount, retries - 1);
+        return this.stakeTea(wallet, percentage, retries - 1);
       }
       return null;
     }
