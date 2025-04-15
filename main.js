@@ -320,6 +320,44 @@ class ClientAPI {
     }
   }
 
+  async sendToAddress(wallet, amount, receiptAddress) {
+    try {
+      const toAddress = receiptAddress;
+      const amountWei = ethers.utils.parseEther(amount.toString());
+      const gasPrice = await wallet.provider.getGasPrice();
+      const estimatedGas = settings.ESTIMATED_GAS || 100000; // Set a default estimated gas limit
+      const gasCost = gasPrice.mul(estimatedGas); // gas cost in Wei
+      const totalCost = amountWei.add(gasCost); // total cost in Wei
+
+      // Check wallet balance
+      const balance = await wallet.provider.getBalance(wallet.address);
+      if (balance.lt(totalCost)) {
+        this.log(colors.red(`Insufficient balance. Available: ${ethers.utils.formatEther(balance)} TEA | Required: ${ethers.utils.formatEther(totalCost)} TEA 🚫`));
+        return null;
+      }
+
+      this.log(colors.yellow(`Sending ${amount} TEA to random address: ${colors.cyan(toAddress)} 📤`));
+
+      const tx = await wallet.sendTransaction({
+        to: toAddress,
+        value: amountWei,
+        gasLimit: estimatedGas,
+      });
+
+      this.log(colors.white(`Transaction sent! Hash: ${colors.cyan(tx.hash)} 🚀`));
+      this.log(colors.gray(`View on explorer: ${network.explorer}/tx/${tx.hash} 🔗`));
+
+      this.log("Waiting for confirmation...", "info");
+      const receipt = await tx.wait();
+      this.log(colors.green(`Transaction confirmed in block ${receipt.blockNumber} ✅`));
+
+      return { receipt, toAddress };
+    } catch (error) {
+      this.log(colors.red("Error sending TEA:", error.message, "❌"));
+      return null;
+    }
+  }
+
   async executeRandomTransfers(wallet, numberOfTransfers) {
     this.log(colors.yellow(`Starting ${numberOfTransfers} transfers...\n`));
 
@@ -328,7 +366,30 @@ class ClientAPI {
       const amount = getRandomNumber(settings.AMOUNT_TRANSFER[0], settings.AMOUNT_TRANSFER[1]);
       if (amount == 0) continue;
       this.log(colors.blue(`Transfer ${i + 1}/${numberOfTransfers} | Amount: ${amount} TEA`));
-      const result = await sendToRandomAddress(wallet, amount, true);
+      const result = await this.sendToRandomAddress(wallet, amount, true);
+
+      if (result) {
+        results.push(result);
+      }
+      if (i < numberOfTransfers - 1) {
+        const timeSleep = getRandomNumber(settings.DELAY_BETWEEN_REQUESTS[0], settings.DELAY_BETWEEN_REQUESTS[1]);
+        this.log(colors.white(`Waiting for ${timeSleep} seconds before next transfer...`));
+        await sleep(timeSleep);
+      }
+    }
+    this.log(colors.green(`\nCompleted ${results.length}/${numberOfTransfers} transfers successfully. 🎉`));
+    return results;
+  }
+
+  async executeTransfers(wallet, numberOfTransfers) {
+    this.log(colors.yellow(`Starting ${numberOfTransfers} transfers...\n`));
+
+    const results = [];
+    for (let i = 0; i < numberOfTransfers; i++) {
+      const amount = getRandomNumber(settings.AMOUNT_TRANSFER[0], settings.AMOUNT_TRANSFER[1]);
+      if (amount == 0) continue;
+      this.log(colors.blue(`Transfer ${i + 1}/${numberOfTransfers} | Amount: ${amount} TEA`));
+      const result = await this.sendToAddress(wallet, amount, wallets[i]);
 
       if (result) {
         results.push(result);
@@ -348,8 +409,8 @@ class ClientAPI {
     await this.executeRandomTransfers(wallet, numberOfTransfers);
   }
 
-  async handleRandomTransfers(wallet) {
-    await this.executeRandomTransfers(wallet, wallets.length);
+  async handleTransfers(wallet) {
+    await this.executeTransfers(wallet, wallets.length);
   }
 
   async handleStaking(wallet) {
@@ -479,7 +540,7 @@ class ClientAPI {
 
     switch (this.itemData.acction) {
       case "1":
-        await this.handleRandomTransfers(wallet);
+        await this.handleTransfers(wallet);
         break;
       case "2":
         await this.handleStaking(wallet);
